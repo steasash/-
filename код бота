@@ -1,130 +1,274 @@
-import pandas as pd
-from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters.state import State, StatesGroup
+import logging
+from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler
 
-# Инициализация бота
-API_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'
-bot = Bot(token=API_TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(bot, storage=storage)
+# Включим логирование
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# Создаем DataFrame с фильмами и сериалами
-data = {
-    'type': ['movie'] * 63 + ['series'] * 63,  # 9 жанров * 7 позиций для каждого типа
-    'genre': [],
-    'title': [],
-    'description': []
+# Определяем константы для состояний разговора
+CHOOSING, MEDIA_TYPE, GENRE, CONTENT = range(4)
+
+# Данные о фильмах и сериалах (можно заменить на данные из базы данных или API)
+media_data = {
+    'фильмы': {
+        'комедия': [
+            'Иван Васильевич меняет профессию',
+            'Операция "Ы" и другие приключения Шурика',
+            'Бриллиантовая рука',
+            'Джентельмены удачи',
+            'Кавказская пленница',
+            'В джазе только девушки',
+            'Один дома'
+        ],
+        'фантастика': [
+            'Матрица',
+            'Начало',
+            'Интерстеллар',
+            'Пятый элемент',
+            'Терминатор 2: Судный день',
+            'Чужой',
+            'Бегущий по лезвию 2049'
+        ],
+        'ужасы': [
+            'Оно',
+            'Сияние',
+            'Паранормальное явление',
+            'Пила',
+            'Звонок',
+            'Чужой',
+            'Хэллоуин'
+        ],
+        'боевик': [
+            'Джон Уик',
+            'Терминатор',
+            'Рейд',
+            'Мадагаскар',
+            'Неудержимые',
+            'Темный рыцарь',
+            'Миссия невыполнима'
+        ],
+        'драма': [
+            'Побег из Шоушенка',
+            'Зеленая миля',
+            'Форрест Гамп',
+            'Титаник',
+            'Леон',
+            'Крестный отец',
+            'Список Шиндлера'
+        ],
+        'триллер': [
+            'Молчание ягнят',
+            'Семь',
+            'Исчезнувшая',
+            'Остров проклятых',
+            'Достать ножи',
+            'Зодиак',
+            'Город грехов'
+        ],
+        'мультфильм': [
+            'Король Лев',
+            'Холодное сердце',
+            'Тайна Коко',
+            'Зверополис',
+            'Головоломка',
+            'Шрек',
+            'Моана'
+        ],
+        'детектив': [
+            'Достать ножи',
+            'Десять негритят',
+            'Убийство в Восточном экспрессе',
+            'Семь',
+            'Головокружение',
+            'Гражданин Кейн',
+            'Основной инстинкт'
+        ],
+        'мелодрама': [
+            'Дневник памяти',
+            'Титаник',
+            'Великий Гэтсби',
+            'Предложение',
+            'Отпуск по обмену',
+            'Ноттинг Хилл',
+            'Любовь и голуби'
+        ]
+    },
+    'сериалы': {
+        'комедия': [
+            'Друзья',
+            'Теория большого взрыва',
+            'Офис',
+            'Клиника',
+            'Как я встретил вашу маму',
+            'Бруклин 9-9',
+            'Шиттс Крик'
+        ],
+        'фантастика': [
+            'Черное зеркало',
+            'Доктор Кто',
+            'Секретные материалы',
+            'Мир Дикого запада',
+            'Сверхъестественное',
+            'Страшные сказки',
+            'Твин Пикс'
+        ],
+        'ужасы': [
+            'Ходячие мертвецы',
+            'Американская история ужасов',
+            'Очень странные дела',
+            'Сабрина',
+            'Баффи - истребительница вампиров',
+            'Заклятие',
+            'Уэнсдей'
+        ],
+        'боевик': [
+            '24 часа',
+            'Стрела',
+            'Тёмный ангел',
+            'Пираты',
+            'Викинги',
+            'Черный список',
+            'Мандалорец'
+        ],
+        'драма': [
+            'Игра престолов',
+            'Во все тяжкие',
+            'Клан Сопрано',
+            'Доктор Хаус',
+            'Бумажный дом',
+            'Корона',
+            'Это мы'
+        ],
+        'триллер': [
+            'Твин Пикс',
+            'Настоящий детектив',
+            'Милларды',
+            'Острые козырьки',
+            'Карточный домик',
+            'Родина',
+            'Лучше звоните Солу'
+        ],
+        'мультсериал': [
+            'Симпсоны',
+            'Южный парк',
+            'Рик и Морти',
+            'Гравити Фолз',
+            'Время приключений',
+            'Футурама',
+            'Бэтмен'
+        ],
+        'детектив': [
+            'Шерлок',
+            'Настоящий детектив',
+            'Убийство',
+            'Менталист',
+            'Элементарно',
+            'Лютер',
+            'Дефективный детектив'
+        ],
+        'мелодрама': [
+            'Секс в большом городе',
+            'Сотня',
+            'Эйфория',
+            'Бриджертоны',
+            'Дневники вампира',
+            'Сплетница',
+            'Остаться в живых'
+        ]
+    }
 }
 
-# Заполняем жанры и названия
-genres_movies = ['Action', 'Comedy', 'Drama', 'Horror', 'Sci-Fi', 'Romance', 'Thriller', 'Fantasy', 'Documentary']
-genres_series = ['Action', 'Comedy', 'Drama', 'Horror', 'Sci-Fi', 'Romance', 'Thriller', 'Fantasy', 'Documentary']
+# Клавиатура для выбора типа медиа
+media_type_keyboard = [['фильмы', 'сериалы']]
+media_type_markup = ReplyKeyboardMarkup(media_type_keyboard, one_time_keyboard=True)
 
-for genre in genres_movies:
-    data['genre'].extend([genre] * 7)
-    data['title'].extend([f"{genre} Movie {i + 1}" for i in range(7)])
-    data['description'].extend([f"Description for {genre} Movie {i + 1}" for i in range(7)])
+# Функция для старта бота
+def start(update, context):
+    update.message.reply_text(
+        "Привет! Я помогу тебе выбрать что посмотреть.\n"
+        "Выбери, что тебя интересует:",
+        reply_markup=media_type_markup
+    )
+    return MEDIA_TYPE
 
-for genre in genres_series:
-    data['genre'].extend([genre] * 7)
-    data['title'].extend([f"{genre} Series {i + 1}" for i in range(7)])
-    data['description'].extend([f"Description for {genre} Series {i + 1}" for i in range(7)])
-
-df = pd.DataFrame(data)
-
-
-# Состояния для FSM
-class Form(StatesGroup):
-    main_menu = State()
-    choose_type = State()
-    choose_genre = State()
-    choose_item = State()
-
-
-# Стартовая команда
-@dp.message_handler(commands=['start'], state='*')
-async def cmd_start(message: types.Message, state: FSMContext):
-    await Form.main_menu.set()
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(types.KeyboardButton("Фильмы"), types.KeyboardButton("Сериалы"))
-    await message.answer("Выберите тип контента:", reply_markup=keyboard)
-
-
-# Обработка главного меню
-@dp.message_handler(state=Form.main_menu)
-async def process_main_menu(message: types.Message, state: FSMContext):
-    if message.text == "Фильмы":
-        await Form.choose_type.set()
-        await state.update_data(content_type="movie")
-        await show_genres(message, "movie")
-    elif message.text == "Сериалы":
-        await Form.choose_type.set()
-        await state.update_data(content_type="series")
-        await show_genres(message, "series")
+# Функция для обработки выбора типа медиа
+def media_type(update, context):
+    user_choice = update.message.text.lower()
+    context.user_data['media_type'] = user_choice
+    
+    if user_choice in media_data:
+        # Создаем клавиатуру с жанрами
+        genres = list(media_data[user_choice].keys())
+        # Разбиваем на 3 строки по 3 кнопки
+        genre_keyboard = [genres[i:i+3] for i in range(0, len(genres), 3)]
+        reply_markup = ReplyKeyboardMarkup(genre_keyboard, one_time_keyboard=True)
+        
+        update.message.reply_text(
+            f"Отлично! Ты выбрал {user_choice}. Теперь выбери жанр:",
+            reply_markup=reply_markup
+        )
+        return GENRE
     else:
-        await message.answer("Пожалуйста, выберите один из вариантов:")
+        update.message.reply_text("Пожалуйста, выбери один из предложенных вариантов.")
+        return MEDIA_TYPE
 
-
-# Показать жанры
-async def show_genres(message: types.Message, content_type: str):
-    genres = genres_movies if content_type == "movie" else genres_series
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
-    keyboard.add(*[types.KeyboardButton(genre) for genre in genres])
-    keyboard.add(types.KeyboardButton("Назад"))
-    await message.answer("Выберите жанр:", reply_markup=keyboard)
-
-
-# Обработка выбора жанра
-@dp.message_handler(state=Form.choose_type)
-async def process_genre(message: types.Message, state: FSMContext):
-    user_data = await state.get_data()
-    content_type = user_data['content_type']
-    genres = genres_movies if content_type == "movie" else genres_series
-
-    if message.text == "Назад":
-        await Form.main_menu.set()
-        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        keyboard.add(types.KeyboardButton("Фильмы"), types.KeyboardButton("Сериалы"))
-        await message.answer("Выберите тип контента:", reply_markup=keyboard)
-    elif message.text in genres:
-        await Form.choose_genre.set()
-        await state.update_data(genre=message.text)
-        await show_items(message, content_type, message.text)
+# Функция для обработки выбора жанра
+def genre(update, context):
+    user_choice = update.message.text.lower()
+    media_type = context.user_data['media_type']
+    
+    if media_type in media_data and user_choice in media_data[media_type]:
+        context.user_data['genre'] = user_choice
+        content_list = media_data[media_type][user_choice]
+        
+        # Формируем сообщение с контентом
+        message = f"Вот подборка {media_type} в жанре {user_choice}:\n\n"
+        for i, item in enumerate(content_list, 1):
+            message += f"{i}. {item}\n"
+        
+        update.message.reply_text(
+            message,
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return ConversationHandler.END
     else:
-        await message.answer("Пожалуйста, выберите жанр из списка:")
+        update.message.reply_text("Пожалуйста, выбери один из предложенных жанров.")
+        return GENRE
 
+# Функция для отмены разговора
+def cancel(update, context):
+    update.message.reply_text(
+        'Диалог прерван. Нажми /start чтобы начать заново.',
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return ConversationHandler.END
 
-# Показать позиции в жанре
-async def show_items(message: types.Message, content_type: str, genre: str):
-    items = df[(df['type'] == content_type) & (df['genre'] == genre)]
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    keyboard.add(*[types.KeyboardButton(title) for title in items['title'].tolist()])
-    keyboard.add(types.KeyboardButton("Назад"))
-    await message.answer("Выберите фильм/сериал:", reply_markup=keyboard)
+def main():
+    # Создаем Updater и передаем ему токен вашего бота
+    updater = Updater("YOUR_TELEGRAM_BOT_TOKEN", use_context=True)
+    
+    # Получаем диспетчер для регистрации обработчиков
+    dp = updater.dispatcher
 
+    # Создаем обработчик разговоров
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={
+            MEDIA_TYPE: [MessageHandler(Filters.regex('^(фильмы|сериалы)$'), media_type)],
+            GENRE: [MessageHandler(Filters.text & ~Filters.command, genre)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
 
-# Обработка выбора позиции
-@dp.message_handler(state=Form.choose_genre)
-async def process_item(message: types.Message, state: FSMContext):
-    user_data = await state.get_data()
-    content_type = user_data['content_type']
-    genre = user_data['genre']
+    # Регистрируем обработчик в диспетчере
+    dp.add_handler(conv_handler)
 
-    if message.text == "Назад":
-        await Form.choose_type.set()
-        await show_genres(message, content_type)
-    else:
-        items = df[(df['type'] == content_type) & (df['genre'] == genre)]
-        if message.text in items['title'].tolist():
-            item = items[items['title'] == message.text].iloc[0]
-            await message.answer(f"{item['title']}\n\n{item['description']}")
-        else:
-            await message.answer("Пожалуйста, выберите позицию из списка:")
-
+    # Запускаем бота
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == '__main__':
-    from aiogram import executor
-
-    executor.start_polling(dp, skip_updates=True)
+    main()
