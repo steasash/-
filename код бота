@@ -1,0 +1,130 @@
+import pandas as pd
+from aiogram import Bot, Dispatcher, types
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters.state import State, StatesGroup
+
+# Инициализация бота
+API_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'
+bot = Bot(token=API_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
+
+# Создаем DataFrame с фильмами и сериалами
+data = {
+    'type': ['movie'] * 63 + ['series'] * 63,  # 9 жанров * 7 позиций для каждого типа
+    'genre': [],
+    'title': [],
+    'description': []
+}
+
+# Заполняем жанры и названия
+genres_movies = ['Action', 'Comedy', 'Drama', 'Horror', 'Sci-Fi', 'Romance', 'Thriller', 'Fantasy', 'Documentary']
+genres_series = ['Action', 'Comedy', 'Drama', 'Horror', 'Sci-Fi', 'Romance', 'Thriller', 'Fantasy', 'Documentary']
+
+for genre in genres_movies:
+    data['genre'].extend([genre] * 7)
+    data['title'].extend([f"{genre} Movie {i + 1}" for i in range(7)])
+    data['description'].extend([f"Description for {genre} Movie {i + 1}" for i in range(7)])
+
+for genre in genres_series:
+    data['genre'].extend([genre] * 7)
+    data['title'].extend([f"{genre} Series {i + 1}" for i in range(7)])
+    data['description'].extend([f"Description for {genre} Series {i + 1}" for i in range(7)])
+
+df = pd.DataFrame(data)
+
+
+# Состояния для FSM
+class Form(StatesGroup):
+    main_menu = State()
+    choose_type = State()
+    choose_genre = State()
+    choose_item = State()
+
+
+# Стартовая команда
+@dp.message_handler(commands=['start'], state='*')
+async def cmd_start(message: types.Message, state: FSMContext):
+    await Form.main_menu.set()
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    keyboard.add(types.KeyboardButton("Фильмы"), types.KeyboardButton("Сериалы"))
+    await message.answer("Выберите тип контента:", reply_markup=keyboard)
+
+
+# Обработка главного меню
+@dp.message_handler(state=Form.main_menu)
+async def process_main_menu(message: types.Message, state: FSMContext):
+    if message.text == "Фильмы":
+        await Form.choose_type.set()
+        await state.update_data(content_type="movie")
+        await show_genres(message, "movie")
+    elif message.text == "Сериалы":
+        await Form.choose_type.set()
+        await state.update_data(content_type="series")
+        await show_genres(message, "series")
+    else:
+        await message.answer("Пожалуйста, выберите один из вариантов:")
+
+
+# Показать жанры
+async def show_genres(message: types.Message, content_type: str):
+    genres = genres_movies if content_type == "movie" else genres_series
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=3)
+    keyboard.add(*[types.KeyboardButton(genre) for genre in genres])
+    keyboard.add(types.KeyboardButton("Назад"))
+    await message.answer("Выберите жанр:", reply_markup=keyboard)
+
+
+# Обработка выбора жанра
+@dp.message_handler(state=Form.choose_type)
+async def process_genre(message: types.Message, state: FSMContext):
+    user_data = await state.get_data()
+    content_type = user_data['content_type']
+    genres = genres_movies if content_type == "movie" else genres_series
+
+    if message.text == "Назад":
+        await Form.main_menu.set()
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        keyboard.add(types.KeyboardButton("Фильмы"), types.KeyboardButton("Сериалы"))
+        await message.answer("Выберите тип контента:", reply_markup=keyboard)
+    elif message.text in genres:
+        await Form.choose_genre.set()
+        await state.update_data(genre=message.text)
+        await show_items(message, content_type, message.text)
+    else:
+        await message.answer("Пожалуйста, выберите жанр из списка:")
+
+
+# Показать позиции в жанре
+async def show_items(message: types.Message, content_type: str, genre: str):
+    items = df[(df['type'] == content_type) & (df['genre'] == genre)]
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    keyboard.add(*[types.KeyboardButton(title) for title in items['title'].tolist()])
+    keyboard.add(types.KeyboardButton("Назад"))
+    await message.answer("Выберите фильм/сериал:", reply_markup=keyboard)
+
+
+# Обработка выбора позиции
+@dp.message_handler(state=Form.choose_genre)
+async def process_item(message: types.Message, state: FSMContext):
+    user_data = await state.get_data()
+    content_type = user_data['content_type']
+    genre = user_data['genre']
+
+    if message.text == "Назад":
+        await Form.choose_type.set()
+        await show_genres(message, content_type)
+    else:
+        items = df[(df['type'] == content_type) & (df['genre'] == genre)]
+        if message.text in items['title'].tolist():
+            item = items[items['title'] == message.text].iloc[0]
+            await message.answer(f"{item['title']}\n\n{item['description']}")
+        else:
+            await message.answer("Пожалуйста, выберите позицию из списка:")
+
+
+if __name__ == '__main__':
+    from aiogram import executor
+
+    executor.start_polling(dp, skip_updates=True)
